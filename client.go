@@ -6,11 +6,12 @@
 package darksky
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
-	"context"
 
 	"github.com/pkg/errors"
 )
@@ -54,6 +55,23 @@ func (c *Client) Get(path string, args Arguments) (Forecast *Forecast, err error
 }
 
 func (c *Client) GetCtx(ctx context.Context, path string, args Arguments) (forecast *Forecast, err error) {
+	body, err := c.GetRaw(path, args, ctx)
+	if err != nil {
+		return
+	}
+	defer body.Close()
+
+	decoder := json.NewDecoder(body)
+	err = decoder.Decode(&forecast)
+	if err != nil {
+		err = errors.Wrapf(err, "JSON decode for /%s failed.", path)
+		return
+	}
+
+	return
+}
+
+func (c *Client) GetRaw(path string, args Arguments, ctx ...context.Context) (body io.ReadCloser, err error) {
 
 	url := fmt.Sprintf("%s/%s/%s", c.BaseURL, c.APIKey, path)
 
@@ -68,24 +86,22 @@ func (c *Client) GetCtx(ctx context.Context, path string, args Arguments) (forec
 		return
 	}
 
-	resp, err := c.client.Do(req.WithContext(ctx))
+	if len(ctx) > 0 && ctx[0] != nil {
+		req = req.WithContext(ctx[0])
+	}
+
+	resp, err := c.client.Do(req)
 	if err != nil {
 		err = errors.Wrapf(err, "HTTP request for /%s request failed.", path)
 		return
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		err = errors.Errorf("darksky API responded with %s", resp.Status)
+		resp.Body.Close()
 		return
 	}
 
-	decoder := json.NewDecoder(resp.Body)
-	err = decoder.Decode(&forecast)
-	if err != nil {
-		err = errors.Wrapf(err, "JSON decode for /%s failed.", path)
-		return
-	}
-
+	body = resp.Body
 	return
 }
